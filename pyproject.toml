@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kitsune"
+version = "0.1.0"
+description = "Windows/AD enumeration toolkit for authorized labs, CTF and pentest exams"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = [
+    "cryptography>=41",
+]
+
+[project.scripts]
+kitsune = "kitsune.__main__:main"
+
+[tool.setuptools]
+packages = ["kitsune", "kitsune.sweep"]

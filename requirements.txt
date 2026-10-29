@@ -1,0 +1,3 @@
+# Only one third-party dependency: AES-256-CBC for GPP cpassword decryption
+# (sweep --gpp). Everything else is the Python standard library.
+cryptography>=41
