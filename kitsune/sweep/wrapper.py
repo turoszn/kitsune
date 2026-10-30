@@ -28,11 +28,25 @@ class SweepRequest:
     credential: Credential
     local_auth: bool
     faketime: Optional[List[str]]
+    # Show credentials in the clear in the report (--reveal). Default off: the
+    # report masks every secret unless the operator opts in. Added last with a
+    # default so positional construction stays unaffected.
+    reveal: bool = False
 
     def dc(self) -> str:
         """The host the DC-oriented checks address: --dc-ip when set, else the
         enumeration target."""
         return self.dc_ip if self.dc_ip else self.target
+
+    def redact_secret(self) -> Optional[str]:
+        """The secret to redact a single string against — None under --reveal,
+        which makes the redaction a no-op (nothing is masked)."""
+        return None if self.reveal else self.credential.secret()
+
+    def redact_secrets(self) -> List[Optional[str]]:
+        """The secret list the AD checks redact against — empty under --reveal,
+        so the fold leaves every value in the clear."""
+        return [] if self.reveal else [self.credential.secret()]
 
 
 def pick_wrapper(inv: BackendInventory) -> Optional[tools.SweepTool]:

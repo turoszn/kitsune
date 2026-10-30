@@ -17,13 +17,12 @@ from typing import List, Optional
 
 from kitsune import TOOL_NAME, __version__
 from kitsune import availability, reporting
-from kitsune.context import DEFAULT_TIMEOUT_SECS, RunContext, RunOptions
+from kitsune.context import RunContext, RunOptions
 from kitsune.engine import run_all
 from kitsune.model import SCHEMA_VERSION, CheckResult, Credential, Report
 from kitsune.suggester import Suggester
 from kitsune.sweep import Sweep, parse_transcript
 from kitsune.sweep import plan as plan_mod
-from kitsune.sysenum import SysEnum
 from kitsune.tools import Protocol
 
 EXIT_FAILURE = 2
@@ -53,6 +52,11 @@ def _add_sweep_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--fix-time", dest="fix_time", action="store_true")
     p.add_argument("--local-auth", dest="local_auth", action="store_true")
     p.add_argument("--faketime")
+    p.add_argument(
+        "--reveal",
+        action="store_true",
+        help="show credentials in the clear in the report (do not mask secrets)",
+    )
     cred = p.add_mutually_exclusive_group()
     cred.add_argument("-p", "--password")
     cred.add_argument("--ntlm")
@@ -108,6 +112,7 @@ def _apply_sweep_flags(args, options: RunOptions) -> None:
     options.sweep_fix_time = args.fix_time
     options.sweep_local_auth = args.local_auth
     options.sweep_faketime = args.faketime
+    options.reveal = args.reveal
     options.sweep_protocols = _parse_protocols(args.protocol)
     options.sweep_spn = args.spn
     options.sweep_asreproast = args.asreproast
@@ -137,11 +142,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"{TOOL_NAME} {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
-
-    p_sys = sub.add_parser("sysenum", help="Local Windows system enumeration (self-healing backends)")
-    p_sys.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECS)
-    p_sys.add_argument("--suggest", action="store_true", help="append passive next-step suggestions")
-    _add_output_args(p_sys)
 
     p_sweep = sub.add_parser("sweep", help="Credential/AD sweep via NetExec/Impacket wrappers")
     p_sweep.add_argument("--target", required=True)
@@ -244,25 +244,11 @@ def _append_suggestions(checks: List[CheckResult], ctx: RunContext, suggest: boo
         checks.extend(run_all([Suggester(list(checks))], ctx))
 
 
-def _local_hostname() -> str:
-    return os.environ.get("HOSTNAME") or os.environ.get("COMPUTERNAME") or "localhost"
-
-
-def _run_sysenum(args) -> None:
-    start = time.monotonic()
-    ctx = RunContext(_local_hostname())
-    ctx.options.timeout_secs = args.timeout
-    availability.build_inventory(ctx)
-    checks = run_all([SysEnum()], ctx)
-    _append_suggestions(checks, ctx, args.suggest)
-    _emit(_build_report(ctx, start, checks), args)
-
-
 def _run_sweep(args) -> None:
     start = time.monotonic()
     if args.parse_file is not None:
         text = _read_text(args.parse_file)
-        findings = parse_transcript(text)
+        findings = parse_transcript(text, args.reveal)
         ctx = RunContext(args.target)
         checks = [
             CheckResult.success(
@@ -350,7 +336,6 @@ def _run_run(args) -> None:
 
 
 _DISPATCH = {
-    "sysenum": _run_sysenum,
     "sweep": _run_sweep,
     "plan": _run_plan,
     "suggester": _run_suggester,

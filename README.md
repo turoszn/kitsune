@@ -19,10 +19,11 @@ chained into an exploit of its own.
   the target you named, and stops.
 - Every external program runs through one shell layer: an argv list spawned
   directly, **never** `sh -c`/`cmd /c`, with a timeout and an output cap.
-- Secrets are masked in the report: the credential, the machine-account password
-  the RBCD chain creates, and whatever a wrapper echoes back. The secret
-  hunter's `-Reveal` opts into plaintext for its own candidate findings; the
-  sweep has no such flag. Reports written to a file are created with mode `0600`
+- Secrets are masked in the report by default: the credential, the
+  machine-account password the RBCD chain creates, and whatever a wrapper echoes
+  back. `sweep --reveal` (and the secret hunter's `-Reveal`) opts into plaintext
+  when you want copy-pasteable creds — handy for CTFs where the report is just
+  your own scratch notes. Reports written to a file are created with mode `0600`
   on Unix.
 - Deterministic output: sorted JSON keys, `--no-timestamps` for byte-identical
   runs.
@@ -79,17 +80,11 @@ kitsune suggester --report hunter.json
 kitsune diff --before run1.json --after hunter.json
 ```
 
-### `sysenum` — local Windows enumeration
-
-Runs on a Windows host. Every module falls back PowerShell → WMI → registry →
-native, and reports which backend answered. On a Linux attacker box it is
-skipped (the local host is not the target; enumerate the remote host with
-`sweep`).
-
-```bash
-kitsune sysenum --format md
-kitsune sysenum --out enum.json --suggest
-```
+> **Local Windows enumeration is out of scope.** kitsune runs on your attacker
+> box and works the target over the network; local privesc/host enumeration is
+> better served by purpose-built on-target tools — run
+> [PrivescCheck](https://github.com/itm4n/PrivescCheck) or winPEAS on the box
+> itself, alongside `secret-hunter.ps1`.
 
 ### `sweep` — credential/AD sweep (NetExec/Impacket wrapper)
 
@@ -114,7 +109,8 @@ at the domain controller while `--target` stays the host being enumerated.
 `--local-auth` authenticates against the target's local accounts. `--fix-time`
 probes the DC clock (nmap `smb2-time`) and runs every wrapper under `faketime` to
 beat `KRB_AP_ERR_SKEW`; `--faketime <SPEC>` is the manual override. `--no-progress`
-silences the per-step stderr progress.
+silences the per-step stderr progress. `--reveal` prints credentials in the clear
+instead of masking them (also applies to `--parse-file`).
 
 Transcript findings record *why* a logon was rejected (`STATUS_*`,
 `KRB_AP_ERR_*`, `clock skew`), and the suggester turns each cause into one next
@@ -164,13 +160,15 @@ you run each command yourself.
 ### `suggester` — passive next-step recommendations
 
 ```bash
-kitsune sysenum --out enum.json
-kitsune suggester --report enum.json          # analyze a saved report
+kitsune sweep --target 10.0.0.5 -u user -p x --out sweep.json
+kitsune suggester --report sweep.json         # analyze a saved report
 kitsune sweep --target 10.0.0.5 -u user -p x --suggest   # or append inline
 ```
 
-Only *suggests* — the commands are for the operator to run, never executed by
-kitsune.
+Reads sweep signals (which protocols a credential works on, why a logon was
+rejected, SPNs, ASREP hashes) and the secret hunter's `secret_hunter.findings`
+count from a saved report. Only *suggests* — the commands are for the operator to
+run, never executed by kitsune.
 
 ### `run` — combined mode
 

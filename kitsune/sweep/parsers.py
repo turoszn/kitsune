@@ -10,28 +10,36 @@ from kitsune.sweep import gpp
 from kitsune.util import PADDING_OPTIONAL, looks_base64
 
 
+# NetExec/CrackMapExec status markers. Only these count as result lines — nxc
+# and impacket also print argparse usage/error text ("[-h]", "[--version]",
+# "[-t THREADS]") whose bracketed tokens must NOT be mistaken for findings.
+_MARKERS = ("[+]", "[-]", "[*]", "[!]")
+
+
 def parse_nxc(text: str) -> List[SweepFinding]:
     out: List[SweepFinding] = []
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
-        mpos = line.find("[")
-        if mpos < 0:
+        # Earliest real status marker on the line, if any.
+        mpos = -1
+        marker = None
+        for m in _MARKERS:
+            i = line.find(m)
+            if i >= 0 and (mpos < 0 or i < mpos):
+                mpos, marker = i, m
+        if marker is None:
             continue
-        mend_rel = line[mpos:].find("]")
-        if mend_rel < 0:
-            continue
-        marker = line[mpos:mpos + mend_rel + 1]
-        detail = line[mpos + mend_rel + 1:].strip()
+        detail = line[mpos + len(marker):].strip()
 
         head = line[:mpos].split()
         if len(head) < 2:
             continue
         protocol = head[0].lower()
         host = head[1]
-        credential_works = "+" in marker or "pwn3d" in marker.lower()
-        reason = failure_reason(detail) if "-" in marker else None
+        credential_works = marker == "[+]"
+        reason = failure_reason(detail) if marker == "[-]" else None
 
         out.append(
             SweepFinding(

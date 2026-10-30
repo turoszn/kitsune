@@ -58,12 +58,14 @@ RBCD_WRITE_ID = "sweep.rbcd.write"
 RBCD_GETST_ID = "sweep.rbcd.getst"
 
 
-def parse_transcript(text: str) -> List[SweepFinding]:
+def parse_transcript(text: str, reveal: bool = False) -> List[SweepFinding]:
     """Findings parsed from a *saved* transcript, masked by shape (the offline
-    --parse-file path has no supplied credential to redact against)."""
+    --parse-file path has no supplied credential to redact against). ``reveal``
+    leaves the transcript's credentials in the clear."""
     out = []
     for f in parse_nxc(text):
-        f.detail = mask_credential_tokens(f.detail)
+        if not reveal:
+            f.detail = mask_credential_tokens(f.detail)
         out.append(f)
     return out
 
@@ -124,7 +126,9 @@ def _redact_findings(findings: List[SweepFinding], secret: Optional[str]) -> Lis
     return findings
 
 
-def _redact_cpasswords(pairs):
+def _redact_cpasswords(pairs, reveal=False):
+    if reveal:
+        return [(cipher, plain) for cipher, plain in pairs]
     return [(cipher, mask(plain) if plain is not None else None) for cipher, plain in pairs]
 
 
@@ -183,6 +187,8 @@ def _exec_protocols(protocols: List[str]) -> List[str]:
 
 
 def _rbcd_secrets(cid: str, req: SweepRequest, machine_pass: str, ccache: str) -> List[Optional[str]]:
+    if req.reveal:
+        return []
     secrets: List[Optional[str]] = [req.credential.secret(), machine_pass]
     if cid == RBCD_GETST_ID:
         secrets.append(ccache)
@@ -239,6 +245,7 @@ class Sweep(Plugin):
                 credential=ctx.credential,
                 local_auth=ctx.options.sweep_local_auth,
                 faketime=faketime_args,
+                reveal=ctx.options.reveal,
             )
             checks.extend(self._run_target(ctx, tool, req, timeout, validity, progress))
         progress.finish()
@@ -253,7 +260,7 @@ class Sweep(Plugin):
     # ----------------------------------------------------------------- target
 
     def _run_target(self, ctx, tool, req, timeout, validity, progress) -> List[CheckResult]:
-        secret = req.credential.secret()
+        secret = req.redact_secret()
         checks: List[CheckResult] = []
         admin_here: Optional[bool] = None
 
@@ -431,7 +438,7 @@ class Sweep(Plugin):
         if spec is None:
             return CheckResult.failed(cid, "sweep", title, "could not build GetUserSPNs command")
         spec = _with_faketime(spec, req.faketime)
-        secret = req.credential.secret()
+        secret = req.redact_secret()
         source = redact(" ".join(spec.argv()), secret)
         try:
             out = run(spec)
@@ -445,7 +452,7 @@ class Sweep(Plugin):
         return CheckResult.success(cid, "sweep", title, payload).with_backend(tool.program).with_source(source)
 
     def _run_hashdump(self, cid, title, spec, req, backend) -> CheckResult:
-        secrets = [req.credential.secret()]
+        secrets = req.redact_secrets()
         ran, failed = self._run_ad(cid, title, spec, secrets, backend, req.faketime)
         if failed is not None:
             return failed
@@ -475,7 +482,7 @@ class Sweep(Plugin):
         tool = tools.GET_USER_SPNS
         if not ctx.backend_inventory.has(tool.program):
             return CheckResult.unavailable(cid, "sweep", title, "impacket-GetUserSPNs not found")
-        secrets = [req.credential.secret()]
+        secrets = req.redact_secrets()
         ran, failed = self._run_ad(cid, title, build_kerberoast(req, timeout), secrets, tool.program, req.faketime)
         if failed is not None:
             return failed
@@ -489,7 +496,7 @@ class Sweep(Plugin):
         tool = tools.COERCER
         if not ctx.backend_inventory.has(tool.program):
             return CheckResult.unavailable(cid, "sweep", title, "coercer not found")
-        secrets = [req.credential.secret()]
+        secrets = req.redact_secrets()
         ran, failed = self._run_ad(cid, title, build_coerce(req, listener, timeout), secrets, tool.program, req.faketime)
         if failed is not None:
             return failed
@@ -498,7 +505,7 @@ class Sweep(Plugin):
 
     def _run_asreproast(self, tool, req, timeout) -> CheckResult:
         cid, title = "sweep.asreproast", "ASREPRoast (pre-auth disabled accounts)"
-        secrets = [req.credential.secret()]
+        secrets = req.redact_secrets()
         outfile = asrep_outfile()
         ran, failed = self._run_ad(cid, title, build_asreproast(tool, req, timeout), secrets, tool.program, req.faketime)
         try:
@@ -514,7 +521,7 @@ class Sweep(Plugin):
 
     def _run_laps(self, tool, req, timeout) -> CheckResult:
         cid, title = "sweep.laps", "LAPS passwords"
-        secrets = [req.credential.secret()]
+        secrets = req.redact_secrets()
         ran, failed = self._run_ad(cid, title, build_laps(tool, req, timeout), secrets, tool.program, req.faketime)
         if failed is not None:
             return failed
@@ -526,18 +533,18 @@ class Sweep(Plugin):
         tool = tools.GET_GPP_PASSWORD
         if not ctx.backend_inventory.has(tool.program):
             return CheckResult.unavailable(cid, "sweep", title, "impacket-Get-GPPPassword not found")
-        secrets = [req.credential.secret()]
+        secrets = req.redact_secrets()
         ran, failed = self._run_ad(cid, title, build_getgpp(req, timeout), secrets, tool.program, req.faketime)
         if failed is not None:
             return failed
         payload, raw_stdout, source = ran
         payload = dict(payload)
-        payload["decrypted_cpasswords"] = [list(p) for p in _redact_cpasswords(extract_cpasswords(raw_stdout))]
+        payload["decrypted_cpasswords"] = [list(p) for p in _redact_cpasswords(extract_cpasswords(raw_stdout), req.reveal)]
         return CheckResult.success(cid, "sweep", title, payload).with_backend(tool.program).with_source(source)
 
     def _run_rbcd(self, tool, req, timeout) -> CheckResult:
         cid, title = "sweep.rbcd", "Resource-Based Constrained Delegation"
-        secrets = [req.credential.secret()]
+        secrets = req.redact_secrets()
         ran, failed = self._run_ad(cid, title, build_rbcd(tool, req, timeout), secrets, tool.program, req.faketime)
         if failed is not None:
             return failed
@@ -545,7 +552,7 @@ class Sweep(Plugin):
         return CheckResult.success(cid, "sweep", title, payload).with_backend(tool.program).with_source(source)
 
     def _run_exec(self, ctx, req, tool, cmd, powershell, timeout) -> List[CheckResult]:
-        secrets = [req.credential.secret()]
+        secrets = req.redact_secrets()
         out: List[CheckResult] = []
         for protocol in _exec_protocols(ctx.options.sweep_protocols):
             cid = _exec_id(powershell, protocol)
